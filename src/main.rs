@@ -8,11 +8,14 @@ fn main() {
 
     for stream in listener.incoming() {
         let stream = stream.unwrap();
+        handle_connection(stream);
     }
 }
 
 fn handle_connection(mut stream: TcpStream) {
-    let buffer = [0; 1024];
+    let mut buffer = [0; 1024];
 
-    stream.read(&mut buffer)
+    stream.read(&mut buffer).unwrap();
+
+    println!("Result: {}", String::from_utf8_lossy(&buffer[..]))
 }
