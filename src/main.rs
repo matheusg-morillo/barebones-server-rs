@@ -1,5 +1,7 @@
 use core::result::Result;
+use core::result::Result::Ok;
 use std::collections::HashMap;
+use std::fs;
 use std::io::BufRead;
 use std::io::BufReader;
 use std::io::Write;
@@ -14,11 +16,19 @@ use time::macros::format_description;
 struct Request {
     method: String,
     target: String,
+    #[allow(dead_code)]
     version: String,
+    #[allow(dead_code)]
     headers: HashMap<String, String>,
 }
 
-const SERVER_NAME: &str = "custom/0.1.0";
+struct Response {
+    status: u16,
+    body: String,
+}
+
+const SERVER_NAME: &str = "matheus-server/0.1.0";
+const CRLF: &str = "\r\n";
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
@@ -36,7 +46,38 @@ fn handle_connection(stream: &mut TcpStream) {
     let request = read_request(&stream).unwrap();
     println!("{:#?}", request);
 
-    let _ = handle_request(stream, &request);
+    let response = handle_request(&request).unwrap();
+
+    let response = format!(
+        "HTTP/1.1 {} {}{}\
+                            Date: {}{}\
+                            Server: {}{}\
+                            Content-Type: {}{}\
+                            Content-Length: {}{}\
+                            Cache-Control: {}{}\
+                            Connection: {}{}\
+                            {}\
+                            {}",
+        response.status,
+        reason_phrase(response.status),
+        CRLF,
+        get_date().unwrap(),
+        CRLF,
+        SERVER_NAME,
+        CRLF,
+        "text/html;charset=utf-8",
+        CRLF,
+        response.body.len(),
+        CRLF,
+        "no-store",
+        CRLF,
+        "keep-alive",
+        CRLF,
+        CRLF,
+        response.body,
+    );
+
+    stream.write_all(response.as_bytes()).unwrap();
 }
 
 fn read_request(stream: &TcpStream) -> Result<Request, &'static str> {
@@ -91,36 +132,25 @@ fn read_request(stream: &TcpStream) -> Result<Request, &'static str> {
     });
 }
 
-fn handle_request(stream: &mut TcpStream, request: &Request) -> Result<(), std::io::Error> {
-    let mut response_success = "HTTP/1.1 200 OK\r\n".to_string();
-    let mut response_fail = "HTTP/1.1 404 OK\r\n\r\n".to_string();
+fn handle_request(request: &Request) -> Result<Response, std::io::Error> {
+    return match (request.method.as_str(), request.target.as_str()) {
+        ("GET", "/") => {
+            let index_page = get_index()?;
+            Ok(Response {
+                status: 200,
+                body: index_page,
+            })
+        }
 
-    add_headers(&mut response_success);
-
-    println!("Response: {}", response_success);
-
-    match (
-        request.method.as_str(),
-        request.target.as_str(),
-        request.version.as_str(),
-    ) {
-        ("GET", "/", "HTTP/1.1") => stream.write_all(response_success.as_bytes()),
-        _ => stream.write_all(response_fail.as_bytes()),
-    }
+        _ => Ok(Response {
+            status: 404,
+            body: String::new(),
+        }),
+    };
 }
 
-fn add_headers(response: &mut String) {
-    let date = get_date().unwrap();
-
-    response.push_str(&format!("Date: {}\r\n", date));
-    response.push_str(&format!("Server: {}\r\n", SERVER_NAME));
-    // TODO: implement content-type negotiation
-    response.push_str(&format!("Content-Type: {}\r\n", "text/plain"));
-    // TODO: implement content-length calculation
-    response.push_str(&format!("Content-Length: {}\r\n", 0));
-    // TODO: get this from static config
-    response.push_str(&format!("Cache-Control: {}\r\n", "no-store"));
-    response.push_str("\r\n");
+fn get_index() -> Result<String, std::io::Error> {
+    return fs::read_to_string("resources/index.html");
 }
 
 fn get_date() -> Result<String, time::error::Format> {
@@ -129,4 +159,23 @@ fn get_date() -> Result<String, time::error::Format> {
         "[weekday repr:short], [day] [month repr:short] [year] [hour]:[minute]:[second] GMT"
     );
     return now.format(&format);
+}
+
+fn reason_phrase(status_code: u16) -> &'static str {
+    match status_code {
+        200 => "OK",
+        201 => "Created",
+        204 => "No Content",
+        301 => "Moved Permanently",
+        302 => "Found",
+        400 => "Bad Request",
+        401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        502 => "Bad Gateway",
+        503 => "Service Unavailable",
+        _ => "", // HTTP/1.1 allows an empty reason phrase after the space
+    }
 }
